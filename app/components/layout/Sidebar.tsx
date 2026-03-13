@@ -13,12 +13,12 @@ interface SidebarProps {
   isCollapsed: boolean;
 }
 
-// 🟢 1. สร้าง Interface เพื่อบอก TypeScript ว่า badge อาจจะมีหรือไม่มีก็ได้
+// 🟢 สร้าง Interface เพื่อแก้ Error: Property 'badge' does not exist
 interface MenuItem {
   icon: any;
   label: string;
   path: string;
-  badge?: number | null; // ใส่เครื่องหมาย ? หมายถึง Optional
+  badge?: number | null;
 }
 
 export function Sidebar({ userRole, isCollapsed }: SidebarProps) {
@@ -39,7 +39,6 @@ export function Sidebar({ userRole, isCollapsed }: SidebarProps) {
     }
   }, [userRole, pathname]);
 
-  // 🟢 2. บังคับใช้ Type : MenuItem[] ให้กับตัวแปรเมนู
   const adminMenuItems: MenuItem[] = [
     { icon: LayoutDashboard, label: 'สรุปภาพรวม', path: '/admin' },
     { icon: Users, label: 'จัดการผู้ใช้', path: '/admin/users' },
@@ -71,7 +70,7 @@ export function Sidebar({ userRole, isCollapsed }: SidebarProps) {
           </div>
           {!isCollapsed && (
             <div className="whitespace-nowrap transition-opacity duration-300">
-              <h1 className="font-semibold text-lg">ธนาคารขยะ</h1>
+              <h1 className="font-semibold text-lg text-slate-800">ธนาคารขยะ</h1>
               <p className="text-xs text-sidebar-foreground/70">{userRole === 'admin' ? 'ระบบผู้ดูแล' : 'ระบบสมาชิก'}</p>
             </div>
           )}
@@ -108,7 +107,7 @@ export function Sidebar({ userRole, isCollapsed }: SidebarProps) {
       <div className="p-4 border-t border-sidebar-border overflow-hidden">
         <button 
           onClick={() => {
-            localStorage.removeItem('waste_bank_user');
+            localStorage.removeItem('waste_bank_user'); // 🟢 เคลียร์ข้อมูล Login
             window.location.href = '/'; 
           }}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-red-50 text-red-500 transition-colors font-black"
