@@ -1,7 +1,13 @@
 "use client";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
-export function Pagination({ currentPage, totalPages, onPageChange, itemsPerPage, totalItems }) {
+export function Pagination({ currentPage, totalPages, onPageChange, itemsPerPage, totalItems }: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+  itemsPerPage: number;
+  totalItems: number;
+}) {
   if (totalPages <= 1) return null;
 
   return (
