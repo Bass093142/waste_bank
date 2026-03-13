@@ -104,7 +104,7 @@ ${colorConfig
 
 const ChartTooltip = RechartsPrimitive.Tooltip;
 
-// 🟢 แก้ไขตรงนี้: ใช้ any เพื่อแก้ปัญหา Property 'payload' does not exist บน Vercel
+// 🟢 แก้ไข: ใช้ any เพื่อแก้ปัญหา Property 'payload' does not exist
 function ChartTooltipContent({
   active,
   payload,
@@ -244,17 +244,14 @@ function ChartTooltipContent({
 
 const ChartLegend = RechartsPrimitive.Legend;
 
+// 🟢 แก้ไขจุดที่ 2: ใช้ any เพื่อแก้ปัญหา Pick<RechartsPrimitive.LegendProps, "payload" | "verticalAlign">
 function ChartLegendContent({
   className,
   hideIcon = false,
   payload,
   verticalAlign = "bottom",
   nameKey,
-}: React.ComponentProps<"div"> &
-  Pick<RechartsPrimitive.LegendProps, "payload" | "verticalAlign"> & {
-    hideIcon?: boolean;
-    nameKey?: string;
-  }) {
+}: any) {
   const { config } = useChart();
 
   if (!payload?.length) {
@@ -269,7 +266,7 @@ function ChartLegendContent({
         className,
       )}
     >
-      {payload.map((item) => {
+      {payload.map((item: any) => {
         const key = `${nameKey || item.dataKey || "value"}`;
         const itemConfig = getPayloadConfigFromPayload(config, item, key);
 
