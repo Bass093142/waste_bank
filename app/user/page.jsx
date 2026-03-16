@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { 
   Trophy, Leaf, Gift, History, Search, ArrowRight, Cloud, Scale, Star, Package, MessageCircle, X, Send,
-  Edit2, Upload, Camera, User as UserIcon, Phone
+  Edit2, Upload, Camera, User as UserIcon, Phone, QrCode, Download, RefreshCw
 } from 'lucide-react';
 
 export default function UserDashboard() {
@@ -46,6 +46,11 @@ export default function UserDashboard() {
   const [uploadingProfile, setUploadingProfile] = useState(false);
   const [editFormData, setEditFormData] = useState({ firstname: '', lastname: '', phone: '', profile_image: '' });
   const [newlyUploadedImageUrl, setNewlyUploadedImageUrl] = useState(null); // เก็บ URL รูปล่าสุดที่เพิ่งอัปโหลดเผื่อกรณีกดยกเลิก
+
+  // States: QR Code
+  const [isQrOpen, setIsQrOpen] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [qrLoading, setQrLoading] = useState(false);
 
   // States: ระบบแชท
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -241,6 +246,46 @@ export default function UserDashboard() {
     setIsEditProfileOpen(false);
   };
 
+  // --- ระบบ QR Code ---
+  const generateQrCode = async (user) => {
+    setQrLoading(true);
+    try {
+      const QRCode = (await import('qrcode')).default;
+      const payload = JSON.stringify({
+        uid: user.id,
+        name: `${user.firstname || ''} ${user.lastname || ''}`.trim(),
+        ts: Date.now(),
+      });
+      const url = await QRCode.toDataURL(payload, {
+        width: 260,
+        margin: 2,
+        color: { dark: '#166534', light: '#ffffff' },
+      });
+      setQrDataUrl(url);
+    } catch (err) {
+      alert('สร้าง QR ไม่สำเร็จ: ' + err.message);
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const handleOpenQr = async () => {
+    setIsQrOpen(true);
+    if (currentUser) await generateQrCode(currentUser);
+  };
+
+  const handleRefreshQr = async () => {
+    if (currentUser) await generateQrCode(currentUser);
+  };
+
+  const handleDownloadQr = () => {
+    if (!qrDataUrl) return;
+    const a = document.createElement('a');
+    a.href = qrDataUrl;
+    a.download = `waste-bank-qr-${currentUser?.id}.png`;
+    a.click();
+  };
+
   // --- ระบบแชท ---
   const fetchChatMessages = async () => {
     if (!currentUser) return;
@@ -333,6 +378,14 @@ export default function UserDashboard() {
               <Star className="w-4 h-4 text-yellow-300 fill-yellow-300" />
               แต้มสะสม: <span className="font-black text-lg text-yellow-300">{currentUser?.points?.toLocaleString()}</span> แต้ม
             </p>
+            
+            {/* ปุ่ม QR Code */}
+            <button
+              onClick={handleOpenQr}
+              className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur-sm border border-white/30 text-white rounded-2xl font-black text-sm transition-all active:scale-95 shadow-md"
+            >
+              <QrCode className="w-4 h-4" /> แสดง QR ฝากขยะ
+            </button>
             
             <div className="mt-6 bg-black/20 p-5 rounded-2xl backdrop-blur-md border border-white/10 shadow-inner">
               <div className="flex justify-between items-end mb-3">
@@ -523,6 +576,81 @@ export default function UserDashboard() {
 
         </div>
       </div>
+
+      {/* 🟢 Modal QR Code */}
+      <AnimatePresence>
+        {isQrOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white rounded-[2rem] w-full max-w-sm shadow-2xl overflow-hidden"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-green-600 to-emerald-500 p-5 text-white flex items-center justify-between">
+                <div>
+                  <h3 className="font-black text-lg flex items-center gap-2"><QrCode className="w-5 h-5" /> QR ฝากขยะ</h3>
+                  <p className="text-green-100 text-xs mt-0.5 font-medium">แสดงให้เจ้าหน้าที่สแกนเพื่อรับแต้ม</p>
+                </div>
+                <button onClick={() => setIsQrOpen(false)} className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* User info */}
+              <div className="px-6 pt-5 pb-3 flex items-center gap-3 border-b border-slate-100">
+                <div className="w-12 h-12 rounded-full bg-green-100 overflow-hidden flex items-center justify-center shrink-0">
+                  {(currentUser?.profile_image && !currentUser.profile_image.includes('default.png'))
+                    ? <img src={currentUser.profile_image} className="w-full h-full object-cover" />
+                    : <UserIcon className="w-6 h-6 text-green-600" />
+                  }
+                </div>
+                <div className="min-w-0">
+                  <p className="font-black text-slate-800 truncate">{currentUser?.firstname} {currentUser?.lastname}</p>
+                  <p className="text-xs text-slate-500 font-medium">@{currentUser?.username}</p>
+                </div>
+                <div className="ml-auto text-right shrink-0">
+                  <p className="text-xs text-slate-400 font-bold">คะแนนสะสม</p>
+                  <p className="font-black text-yellow-500 text-lg">{currentUser?.points?.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* QR Code */}
+              <div className="px-6 py-5 flex flex-col items-center">
+                {qrLoading ? (
+                  <div className="w-52 h-52 bg-slate-50 rounded-2xl flex items-center justify-center border-4 border-green-100">
+                    <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : qrDataUrl ? (
+                  <div className="p-3 border-4 border-green-100 rounded-2xl bg-white shadow-inner">
+                    <img src={qrDataUrl} alt="QR Code" className="w-52 h-52 rounded-lg" />
+                  </div>
+                ) : (
+                  <div className="w-52 h-52 bg-slate-50 rounded-2xl flex items-center justify-center border-4 border-slate-100">
+                    <p className="text-slate-400 text-sm font-bold">ไม่สามารถสร้าง QR ได้</p>
+                  </div>
+                )}
+                <p className="text-xs text-slate-400 font-medium text-center mt-3 leading-relaxed">
+                  QR นี้ผูกกับบัญชีของคุณ<br/>เจ้าหน้าที่จะสแกนเพื่อบันทึกการรับฝากและเพิ่มคะแนน
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="px-6 pb-6 grid grid-cols-2 gap-3">
+                <button onClick={handleRefreshQr} disabled={qrLoading}
+                  className="flex items-center justify-center gap-2 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm hover:bg-slate-200 transition-all active:scale-95 disabled:opacity-50">
+                  <RefreshCw className={`w-4 h-4 ${qrLoading ? 'animate-spin' : ''}`} /> รีเฟรช
+                </button>
+                <button onClick={handleDownloadQr} disabled={!qrDataUrl || qrLoading}
+                  className="flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-2xl font-black text-sm hover:bg-green-700 transition-all active:scale-95 shadow-lg disabled:opacity-50">
+                  <Download className="w-4 h-4" /> บันทึกรูป
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* 🟢 Modal แก้ไขโปรไฟล์ (Edit Profile) */}
       <AnimatePresence>
