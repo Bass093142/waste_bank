@@ -1,18 +1,18 @@
 "use client";
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Settings, Store, Shield, Save, Clock, Banknote, Bell, CheckCircle2 
-} from 'lucide-react';
+import { Settings, Store, Shield, Save, Clock, Banknote, Bell, CheckCircle2 } from 'lucide-react';
+import { useLanguage } from '@/app/contexts/LanguageContext';
 
 export default function AdminSettings() {
+  const { lang } = useLanguage();
+
   const [activeTab, setActiveTab] = useState('general');
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // 🟢 States จำลองสำหรับการตั้งค่า (นำไปเชื่อมต่อ DB ภายหลังได้)
   const [settings, setSettings] = useState({
-    bankName: 'ธนาคารขยะรีไซเคิล วิทยาลัย...',
+    bankName: lang === 'th' ? 'ธนาคารขยะรีไซเคิล วิทยาลัย...' : 'EcoBit Exchange - Campus',
     isOpen: true,
     openTime: '08:00',
     closeTime: '16:30',
@@ -21,67 +21,113 @@ export default function AdminSettings() {
     emailNotifications: true,
   });
 
-  const handleSave = (e) => {
-    e.preventDefault();
-    setIsSaving(true);
-    
-    // จำลองการบันทึกข้อมูล (หน่วงเวลา 1 วินาที)
-    setTimeout(() => {
-      setIsSaving(false);
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000); // ซ่อนข้อความสำเร็จหลัง 3 วินาที
-    }, 1000);
+  // ── i18n ──
+  const tx = {
+    pageTitle:        lang === 'th' ? 'ตั้งค่าระบบ'                               : 'System Settings',
+    pageDesc:         lang === 'th' ? 'ปรับแต่งการทำงานของระบบธนาคารขยะของคุณ'    : 'Customize your waste bank system',
+    saveBtn:          lang === 'th' ? 'บันทึกการตั้งค่า'                           : 'Save Settings',
+    saveSuccess:      lang === 'th' ? 'บันทึกการตั้งค่าระบบเรียบร้อยแล้ว!'         : 'Settings saved successfully!',
+
+    tabGeneral:       lang === 'th' ? 'ทั่วไปและเวลาทำการ'       : 'General & Hours',
+    tabFinance:       lang === 'th' ? 'คะแนนและการเงิน'           : 'Points & Finance',
+    tabNotifications: lang === 'th' ? 'การแจ้งเตือน'              : 'Notifications',
+    tabSecurity:      lang === 'th' ? 'ความปลอดภัย'               : 'Security',
+
+    // General tab
+    generalTitle:     lang === 'th' ? 'ข้อมูลทั่วไปและเวลาทำการ'                     : 'General Info & Hours',
+    generalDesc:      lang === 'th' ? 'จัดการชื่อระบบและการเปิด/ปิดรับฝากขยะ'        : 'Manage system name and open/close status',
+    fieldBankName:    lang === 'th' ? 'ชื่อระบบ / ชื่อธนาคารขยะ'                     : 'System Name / Bank Name',
+    fieldStatus:      lang === 'th' ? 'สถานะการเปิดรับฝากขยะ'                        : 'Waste Deposit Status',
+    fieldStatusDesc:  lang === 'th' ? 'หากปิดระบบ สมาชิกจะไม่สามารถทำรายการฝากหรือแลกได้' : 'If closed, members cannot deposit or redeem',
+    fieldOpenTime:    lang === 'th' ? 'เวลาเปิดทำการ'             : 'Opening Time',
+    fieldCloseTime:   lang === 'th' ? 'เวลาปิดทำการ'              : 'Closing Time',
+
+    // Finance tab
+    financeTitle:     lang === 'th' ? 'คะแนนและการเงิน'                          : 'Points & Finance',
+    financeDesc:      lang === 'th' ? 'ตั้งค่าเรทราคาและเงื่อนไขการแลกของรางวัล'  : 'Configure point rates and redemption conditions',
+    fieldMultiplier:  lang === 'th' ? 'ตัวคูณคะแนนพิเศษ (Event Multiplier)'       : 'Event Points Multiplier',
+    multiplierUnit:   lang === 'th' ? 'เท่า (X)'                                  : 'times (X)',
+    multiplierDesc:   lang === 'th' ? 'ค่าเริ่มต้นคือ 1 หากตั้งเป็น 2 สมาชิกจะได้แต้ม 2 เท่าเมื่อฝากขยะ' : 'Default is 1. Setting to 2 gives members double points.',
+    fieldMinRedeem:   lang === 'th' ? 'ขั้นต่ำในการแลกของรางวัล'                   : 'Minimum Points to Redeem',
+    minRedeemUnit:    lang === 'th' ? 'แต้ม'                                      : 'points',
+
+    // Notifications tab
+    notiTitle:        lang === 'th' ? 'การแจ้งเตือน'                           : 'Notifications',
+    notiDesc:         lang === 'th' ? 'จัดการการแจ้งเตือนในระบบและอีเมล'       : 'Manage system and email notifications',
+    notiChat:         lang === 'th' ? 'รับการแจ้งเตือนเมื่อมีแชทใหม่'          : 'Notify on new chat message',
+    notiChatDesc:     lang === 'th' ? 'แสดงจุดแดงแจ้งเตือนเมื่อสมาชิกส่งข้อความมาหา' : 'Show red dot when members send messages',
+
+    // Security tab
+    securityTitle:    lang === 'th' ? 'ความปลอดภัยและรหัสผ่าน'                             : 'Security & Password',
+    securityDesc:     lang === 'th' ? 'เปลี่ยนรหัสผ่านเพื่อความปลอดภัยของบัญชีผู้ดูแล'   : 'Change password to secure your admin account',
+    fieldCurrentPw:   lang === 'th' ? 'รหัสผ่านปัจจุบัน'  : 'Current Password',
+    fieldNewPw:       lang === 'th' ? 'รหัสผ่านใหม่'       : 'New Password',
+    fieldConfirmPw:   lang === 'th' ? 'ยืนยันรหัสผ่านใหม่' : 'Confirm New Password',
   };
 
   const tabs = [
-    { id: 'general', label: 'ทั่วไปและเวลาทำการ', icon: Store },
-    { id: 'finance', label: 'คะแนนและการเงิน', icon: Banknote },
-    { id: 'notifications', label: 'การแจ้งเตือน', icon: Bell },
-    { id: 'security', label: 'ความปลอดภัย', icon: Shield },
+    { id: 'general',       label: tx.tabGeneral,       icon: Store    },
+    { id: 'finance',       label: tx.tabFinance,        icon: Banknote },
+    { id: 'notifications', label: tx.tabNotifications,  icon: Bell     },
+    { id: 'security',      label: tx.tabSecurity,       icon: Shield   },
   ];
 
+  const handleSave = (e) => {
+    e.preventDefault();
+    setIsSaving(true);
+    setTimeout(() => {
+      setIsSaving(false);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    }, 1000);
+  };
+
+  // ── Reusable input styles ──
+  const inputCls = "w-full p-4 border border-border rounded-xl bg-muted/30 dark:bg-muted/20 text-foreground focus:bg-background outline-none focus:ring-2 focus:ring-primary/30 font-medium transition-all";
+  const labelCls = "text-sm font-bold text-foreground";
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-10">
-      
-      {/* Header */}
+    <div className="max-w-6xl mx-auto space-y-6 pb-10 transition-colors">
+
+      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3">
-            <Settings className="w-8 h-8 text-primary" />
-            ตั้งค่าระบบ
+          <h1 className="text-2xl md:text-3xl font-black text-foreground flex items-center gap-3">
+            <Settings className="w-7 h-7 md:w-8 md:h-8 text-primary" />
+            {tx.pageTitle}
           </h1>
-          <p className="text-slate-500 font-medium mt-1">ปรับแต่งการทำงานของระบบธนาคารขยะของคุณ</p>
+          <p className="text-muted-foreground font-medium mt-1 text-sm">{tx.pageDesc}</p>
         </div>
-        
-        <button 
-          onClick={handleSave} 
+
+        <button
+          onClick={handleSave}
           disabled={isSaving}
-          className="px-6 py-3 bg-primary text-white rounded-xl font-black hover:bg-primary/90 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 min-w-[140px]"
+          className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-black hover:bg-primary/90 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 min-w-[160px]"
         >
           {isSaving ? (
-            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
           ) : (
-            <><Save className="w-5 h-5" /> บันทึกการตั้งค่า</>
+            <><Save className="w-5 h-5" /> {tx.saveBtn}</>
           )}
         </button>
       </div>
 
-      {/* แจ้งเตือนบันทึกสำเร็จ */}
+      {/* ── Success Toast ── */}
       <AnimatePresence>
         {showSuccess && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-            className="bg-green-50 border border-green-200 text-green-700 px-6 py-4 rounded-2xl flex items-center gap-3 font-bold shadow-sm"
+            className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400 px-6 py-4 rounded-2xl flex items-center gap-3 font-bold shadow-sm transition-colors"
           >
             <CheckCircle2 className="w-6 h-6 text-green-500" />
-            บันทึกการตั้งค่าระบบเรียบร้อยแล้ว!
+            {tx.saveSuccess}
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="flex flex-col lg:flex-row gap-8">
-        
-        {/* 🟢 เมนูด้านซ้าย (Tabs) */}
+      <div className="flex flex-col lg:flex-row gap-6 md:gap-8">
+
+        {/* ── Tab Menu ── */}
         <div className="w-full lg:w-72 shrink-0 space-y-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -90,137 +136,132 @@ export default function AdminSettings() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-5 py-4 rounded-2xl font-bold transition-all ${
-                  isActive 
-                    ? 'bg-primary text-white shadow-md' 
-                    : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-primary border border-slate-100'
+                className={`w-full flex items-center gap-3 px-5 py-4 rounded-2xl font-bold transition-all text-left ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-md'
+                    : 'bg-card text-muted-foreground hover:bg-muted hover:text-foreground border border-border'
                 }`}
               >
-                <Icon className={`w-5 h-5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                {tab.label}
+                <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground'}`} />
+                <span className="text-sm">{tab.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* 🟢 พื้นที่ตั้งค่าด้านขวา */}
-        <div className="flex-1 bg-white rounded-[2rem] border border-slate-100 shadow-xl overflow-hidden p-6 md:p-8">
+        {/* ── Content Panel ── */}
+        <div className="flex-1 bg-card rounded-[2rem] border border-border shadow-xl overflow-hidden p-6 md:p-8 transition-colors">
           <AnimatePresence mode="wait">
-            
-            {/* --- TAB: ทั่วไป --- */}
+
+            {/* TAB: ทั่วไป */}
             {activeTab === 'general' && (
               <motion.div key="general" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-8">
-                <div className="border-b border-slate-100 pb-4 mb-6">
-                  <h3 className="text-xl font-black text-slate-800">ข้อมูลทั่วไปและเวลาทำการ</h3>
-                  <p className="text-sm text-slate-500 font-medium">จัดการชื่อระบบและการเปิด/ปิดรับฝากขยะ</p>
+                <div className="border-b border-border pb-4 mb-6">
+                  <h3 className="text-xl font-black text-foreground">{tx.generalTitle}</h3>
+                  <p className="text-sm text-muted-foreground font-medium">{tx.generalDesc}</p>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">ชื่อระบบ / ชื่อธนาคารขยะ</label>
-                    <input 
-                      type="text" 
-                      value={settings.bankName} 
-                      onChange={e => setSettings({...settings, bankName: e.target.value})}
-                      className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-medium transition-all" 
-                    />
+                    <label className={labelCls}>{tx.fieldBankName}</label>
+                    <input type="text" value={settings.bankName} onChange={e => setSettings({ ...settings, bankName: e.target.value })} className={inputCls} />
                   </div>
 
-                  <div className="p-5 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
+                  <div className="p-5 bg-muted/30 dark:bg-muted/20 border border-border rounded-2xl flex items-center justify-between transition-colors">
                     <div>
-                      <p className="font-bold text-slate-800 flex items-center gap-2"><Store className="w-4 h-4 text-primary" /> สถานะการเปิดรับฝากขยะ</p>
-                      <p className="text-xs text-slate-500 mt-1">หากปิดระบบ สมาชิกจะไม่สามารถทำรายการฝากหรือแลกได้</p>
+                      <p className="font-bold text-foreground flex items-center gap-2"><Store className="w-4 h-4 text-primary" /> {tx.fieldStatus}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{tx.fieldStatusDesc}</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" className="sr-only peer" checked={settings.isOpen} onChange={e => setSettings({...settings, isOpen: e.target.checked})} />
-                      <div className="w-14 h-7 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500"></div>
+                      <input type="checkbox" className="sr-only peer" checked={settings.isOpen} onChange={e => setSettings({ ...settings, isOpen: e.target.checked })} />
+                      <div className="w-14 h-7 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-500" />
                     </label>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Clock className="w-4 h-4" /> เวลาเปิดทำการ</label>
-                      <input type="time" value={settings.openTime} onChange={e => setSettings({...settings, openTime: e.target.value})} className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-bold transition-all" />
+                      <label className={`${labelCls} flex items-center gap-2`}><Clock className="w-4 h-4" /> {tx.fieldOpenTime}</label>
+                      <input type="time" value={settings.openTime} onChange={e => setSettings({ ...settings, openTime: e.target.value })} className={inputCls} />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Clock className="w-4 h-4" /> เวลาปิดทำการ</label>
-                      <input type="time" value={settings.closeTime} onChange={e => setSettings({...settings, closeTime: e.target.value})} className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-bold transition-all" />
+                      <label className={`${labelCls} flex items-center gap-2`}><Clock className="w-4 h-4" /> {tx.fieldCloseTime}</label>
+                      <input type="time" value={settings.closeTime} onChange={e => setSettings({ ...settings, closeTime: e.target.value })} className={inputCls} />
                     </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* --- TAB: การเงินและคะแนน --- */}
+            {/* TAB: การเงิน */}
             {activeTab === 'finance' && (
               <motion.div key="finance" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-8">
-                <div className="border-b border-slate-100 pb-4 mb-6">
-                  <h3 className="text-xl font-black text-slate-800">คะแนนและการเงิน</h3>
-                  <p className="text-sm text-slate-500 font-medium">ตั้งค่าเรทราคาและเงื่อนไขการแลกของรางวัล</p>
+                <div className="border-b border-border pb-4 mb-6">
+                  <h3 className="text-xl font-black text-foreground">{tx.financeTitle}</h3>
+                  <p className="text-sm text-muted-foreground font-medium">{tx.financeDesc}</p>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">ตัวคูณคะแนนพิเศษ (Event Multiplier)</label>
+                    <label className={labelCls}>{tx.fieldMultiplier}</label>
                     <div className="flex items-center gap-4">
-                      <input type="number" step="0.1" value={settings.pointRate} onChange={e => setSettings({...settings, pointRate: e.target.value})} className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-bold transition-all" />
-                      <span className="font-bold text-slate-400">เท่า (X)</span>
+                      <input type="number" step="0.1" value={settings.pointRate} onChange={e => setSettings({ ...settings, pointRate: e.target.value })} className={inputCls} />
+                      <span className="font-bold text-muted-foreground whitespace-nowrap">{tx.multiplierUnit}</span>
                     </div>
-                    <p className="text-xs text-slate-500">ค่าเริ่มต้นคือ 1 หากตั้งเป็น 2 สมาชิกจะได้แต้ม 2 เท่าเมื่อฝากขยะ</p>
+                    <p className="text-xs text-muted-foreground">{tx.multiplierDesc}</p>
                   </div>
 
                   <div className="space-y-2 mt-4">
-                    <label className="text-sm font-bold text-slate-700">ขั้นต่ำในการแลกของรางวัล</label>
+                    <label className={labelCls}>{tx.fieldMinRedeem}</label>
                     <div className="flex items-center gap-4">
-                      <input type="number" value={settings.minRedeemPoints} onChange={e => setSettings({...settings, minRedeemPoints: e.target.value})} className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-bold transition-all" />
-                      <span className="font-bold text-slate-400">แต้ม</span>
+                      <input type="number" value={settings.minRedeemPoints} onChange={e => setSettings({ ...settings, minRedeemPoints: e.target.value })} className={inputCls} />
+                      <span className="font-bold text-muted-foreground whitespace-nowrap">{tx.minRedeemUnit}</span>
                     </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* --- TAB: การแจ้งเตือน --- */}
+            {/* TAB: การแจ้งเตือน */}
             {activeTab === 'notifications' && (
               <motion.div key="notifications" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-8">
-                <div className="border-b border-slate-100 pb-4 mb-6">
-                  <h3 className="text-xl font-black text-slate-800">การแจ้งเตือน</h3>
-                  <p className="text-sm text-slate-500 font-medium">จัดการการแจ้งเตือนในระบบและอีเมล</p>
+                <div className="border-b border-border pb-4 mb-6">
+                  <h3 className="text-xl font-black text-foreground">{tx.notiTitle}</h3>
+                  <p className="text-sm text-muted-foreground font-medium">{tx.notiDesc}</p>
                 </div>
 
-                <div className="p-5 bg-slate-50 border border-slate-100 rounded-2xl flex items-center justify-between">
+                <div className="p-5 bg-muted/30 dark:bg-muted/20 border border-border rounded-2xl flex items-center justify-between transition-colors">
                   <div>
-                    <p className="font-bold text-slate-800 flex items-center gap-2">รับการแจ้งเตือนเมื่อมีแชทใหม่</p>
-                    <p className="text-xs text-slate-500 mt-1">แสดงจุดแดงแจ้งเตือนเมื่อสมาชิกส่งข้อความมาหา</p>
+                    <p className="font-bold text-foreground">{tx.notiChat}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{tx.notiChatDesc}</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-14 h-7 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
+                    <div className="w-14 h-7 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary" />
                   </label>
                 </div>
               </motion.div>
             )}
 
-            {/* --- TAB: ความปลอดภัย --- */}
+            {/* TAB: ความปลอดภัย */}
             {activeTab === 'security' && (
               <motion.div key="security" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-8">
-                <div className="border-b border-slate-100 pb-4 mb-6">
-                  <h3 className="text-xl font-black text-slate-800">ความปลอดภัยและรหัสผ่าน</h3>
-                  <p className="text-sm text-slate-500 font-medium">เปลี่ยนรหัสผ่านเพื่อความปลอดภัยของบัญชีผู้ดูแล</p>
+                <div className="border-b border-border pb-4 mb-6">
+                  <h3 className="text-xl font-black text-foreground">{tx.securityTitle}</h3>
+                  <p className="text-sm text-muted-foreground font-medium">{tx.securityDesc}</p>
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">รหัสผ่านปัจจุบัน</label>
-                    <input type="password" placeholder="••••••••" className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-medium transition-all" />
+                    <label className={labelCls}>{tx.fieldCurrentPw}</label>
+                    <input type="password" placeholder="••••••••" className={inputCls} />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">รหัสผ่านใหม่</label>
-                    <input type="password" placeholder="••••••••" className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-medium transition-all" />
+                    <label className={labelCls}>{tx.fieldNewPw}</label>
+                    <input type="password" placeholder="••••••••" className={inputCls} />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-700">ยืนยันรหัสผ่านใหม่</label>
-                    <input type="password" placeholder="••••••••" className="w-full p-4 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white outline-none focus:ring-2 focus:ring-primary/30 font-medium transition-all" />
+                    <label className={labelCls}>{tx.fieldConfirmPw}</label>
+                    <input type="password" placeholder="••••••••" className={inputCls} />
                   </div>
                 </div>
               </motion.div>
@@ -228,7 +269,6 @@ export default function AdminSettings() {
 
           </AnimatePresence>
         </div>
-
       </div>
     </div>
   );

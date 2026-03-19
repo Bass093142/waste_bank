@@ -1,20 +1,28 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/app/components/ui/dialog";
 import { Skeleton } from "@/app/components/ui/skeleton";
 import { Pagination } from '@/app/components/ui/Pagination';
 import {
   Edit2, Upload, User, ShieldCheck, Ban, Star, Search,
   QrCode, Weight, ChevronDown, Loader2, CheckCircle2,
-  Leaf, X, Camera, Plus, Send
+  Leaf, X, Camera, Plus, Send, ScanLine
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
+import { useLanguage } from '@/app/contexts/LanguageContext';
 
 export default function AdminUsers() {
+  const { t, lang } = useLanguage();
   const [userList, setUserList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8;
+
+  // ── Filter States ──
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterGender, setFilterGender] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
 
   // Edit user dialog
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -28,7 +36,7 @@ export default function AdminUsers() {
 
   // ── Deposit modal (สแกน QR / เพิ่มคะแนน) ──
   const [isDepositOpen, setIsDepositOpen] = useState(false);
-  const [depositStep, setDepositStep] = useState('scan'); // scan | form | done
+  const [depositStep, setDepositStep] = useState('scan'); 
   const [scanning, setScanning] = useState(false);
   const [depositUser, setDepositUser] = useState(null);
   const [wasteTypes, setWasteTypes] = useState([]);
@@ -37,8 +45,15 @@ export default function AdminUsers() {
   const [manualUserId, setManualUserId] = useState('');
   const [saving, setSaving] = useState(false);
   const [depositResult, setDepositResult] = useState(null);
-  const [lineStatus, setLineStatus] = useState(''); // 'sending' | 'sent' | 'failed' | ''
+  const [lineStatus, setLineStatus] = useState('');
   const html5QrRef = useRef(null);
+
+  // ── AI Waste Classifier State (Real-time Camera) ──
+  const [isAiCameraOpen, setIsAiCameraOpen] = useState(false);
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+  const [aiResult, setAiResult] = useState(null); 
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -54,7 +69,23 @@ export default function AdminUsers() {
       .then(({ data }) => { if (data) setWasteTypes(data); });
   }, []);
 
-  // ── Edit user handlers ──
+  const filteredUsers = useMemo(() => {
+    return userList.filter((user) => {
+      const searchMatch = `${user.firstname || ''} ${user.lastname || ''} ${user.username || ''}`
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase());
+      const genderMatch = filterGender === 'all' || user.gender === filterGender;
+      const statusMatch = filterStatus === 'all' || user.status === filterStatus;
+      return searchMatch && genderMatch && statusMatch;
+    });
+  }, [userList, searchTerm, filterGender, filterStatus]);
+
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, filterGender, filterStatus]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const displayedUsers = filteredUsers.slice(startIndex, startIndex + itemsPerPage);
+
   const getFileNameFromUrl = (url) => (url && url !== 'null' && !url.includes('default.png') ? url.split('/').pop() : null);
   const deleteImageFromStorage = async (url) => {
     const fileName = getFileNameFromUrl(url);
@@ -73,7 +104,7 @@ export default function AdminUsers() {
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from('profile_images').getPublicUrl(fileName);
       setFormData({ ...formData, profile_image: data.publicUrl });
-    } catch (error) { alert('Error: ' + error.message); }
+    } catch (error) { toast.error('อัปโหลดรูปภาพไม่สำเร็จ'); }
     finally { setUploading(false); }
   };
 
@@ -95,7 +126,8 @@ export default function AdminUsers() {
       if (isEditing) await supabase.from('users').update(payload).eq('id', formData.id);
       setIsDialogOpen(false);
       fetchUsers();
-    } catch { alert('บันทึกไม่สำเร็จ'); }
+      toast.success('บันทึกข้อมูลสมาชิกเรียบร้อย');
+    } catch { toast.error('บันทึกข้อมูลไม่สำเร็จ'); }
   };
 
   const openForm = (user) => {
@@ -107,7 +139,6 @@ export default function AdminUsers() {
     }
   };
 
-  // ── Deposit / QR handlers ──
   const openDepositModal = () => {
     setDepositStep('scan');
     setDepositUser(null);
@@ -121,6 +152,7 @@ export default function AdminUsers() {
 
   const closeDepositModal = async () => {
     await stopScanner();
+    stopAiCamera();
     setIsDepositOpen(false);
   };
 
@@ -132,15 +164,12 @@ export default function AdminUsers() {
       await html5QrRef.current.start(
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 220, height: 220 } },
-        (decoded) => {
-          stopScanner();
-          handleQrDecoded(decoded);
-        },
+        (decoded) => { stopScanner(); handleQrDecoded(decoded); },
         () => {}
       );
     } catch (err) {
       setScanning(false);
-      alert('ไม่สามารถเปิดกล้องได้: ' + err.message);
+      toast.error('ไม่สามารถเปิดกล้องได้ โปรดตรวจสอบการอนุญาตใช้งานกล้อง');
     }
   };
 
@@ -154,32 +183,76 @@ export default function AdminUsers() {
       const payload = JSON.parse(text);
       if (!payload.uid) throw new Error('invalid');
       await fetchDepositUser(payload.uid);
-    } catch {
-      alert('QR ไม่ถูกต้อง กรุณาให้ลูกค้าแสดง QR จากแอปธนาคารขยะ');
-    }
+    } catch { toast.error('QR Code ไม่ถูกต้อง กรุณาใช้ QR จากแอปเท่านั้น'); }
   };
 
   const fetchDepositUser = async (uid) => {
     const { data, error } = await supabase
       .from('users').select('id, firstname, lastname, username, points, profile_image, phone')
       .eq('id', uid).single();
-    if (error || !data) { alert('ไม่พบสมาชิก ID: ' + uid); return; }
+    if (error || !data) { toast.error(`ไม่พบสมาชิก ID: ${uid}`); return; }
     setDepositUser(data);
     setDepositStep('form');
   };
 
-  // คำนวณ preview คะแนน
+  const startAiCamera = async () => {
+    setIsAiCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (videoRef.current) { videoRef.current.srcObject = stream; }
+    } catch (err) {
+      toast.error('ไม่สามารถเปิดกล้องได้ โปรดอนุญาตการใช้กล้อง');
+      setIsAiCameraOpen(false);
+    }
+  };
+
+  const stopAiCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    }
+    setIsAiCameraOpen(false);
+    setAiResult(null);
+  };
+
+  const captureAndAnalyze = async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    setIsAiAnalyzing(true);
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+
+    try {
+      const res = await fetch('/api/classify-waste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image }),
+      });
+
+      const data = await res.json();
+      setAiResult(data);
+
+      if (data.isMatch) {
+        const matchedType = wasteTypes.find(w => w.name.includes(data.category) || data.category.includes(w.name));
+        if (matchedType) { setSelectedType(matchedType.name); stopAiCamera(); } 
+        else { setSelectedType(''); }
+      } else { setSelectedType(''); }
+    } catch (err) {
+      toast.error('เชื่อมต่อ AI ไม่สำเร็จ กรุณาลองใหม่');
+    } finally { setIsAiAnalyzing(false); }
+  };
+
   const selectedWasteType = wasteTypes.find(w => w.name === selectedType);
-  const estimatedPoints = selectedWasteType && weightKg
-    ? Math.round(Number(weightKg) * selectedWasteType.points_per_kg) : 0;
-  const estimatedCo2 = selectedWasteType && weightKg
-    ? (Number(weightKg) * Number(selectedWasteType.co2_factor)).toFixed(3) : '0';
+  const estimatedPoints = selectedWasteType && weightKg ? Math.round(Number(weightKg) * selectedWasteType.points_per_kg) : 0;
+  const estimatedCo2 = selectedWasteType && weightKg ? (Number(weightKg) * Number(selectedWasteType.co2_factor)).toFixed(3) : '0';
 
   const handleSaveDeposit = async () => {
-    if (!depositUser || !selectedType || !weightKg || Number(weightKg) <= 0) {
-      alert('กรุณากรอกข้อมูลให้ครบ');
-      return;
-    }
+    if (!depositUser || !selectedType || !weightKg || Number(weightKg) <= 0) { toast.warning('กรุณากรอกข้อมูลให้ครบและถูกต้อง'); return; }
     setSaving(true);
     try {
       const wt = wasteTypes.find(w => w.name === selectedType);
@@ -187,87 +260,95 @@ export default function AdminUsers() {
       const co2Reduced = (Number(weightKg) * Number(wt?.co2_factor || 0)).toFixed(3);
       const newTotal = depositUser.points + pointsEarned;
 
-      // 1. บันทึก deposit_stats
-      await supabase.from('deposit_stats').insert([{
-        user_id: depositUser.id,
-        deposit_date: new Date().toISOString().split('T')[0],
-        weight_kg: Number(weightKg),
-        waste_type: selectedType,
-      }]);
-
-      // 2. บันทึก point_history
-      await supabase.from('point_history').insert([{
-        user_id: depositUser.id,
-        points: pointsEarned,
-        type: 'add',
-        description: `ฝากขยะ ${selectedType} ${weightKg} กก.`,
-      }]);
-
-      // 3. อัปเดตคะแนน users
+      await supabase.from('deposit_stats').insert([{ user_id: depositUser.id, deposit_date: new Date().toISOString().split('T')[0], weight_kg: Number(weightKg), waste_type: selectedType }]);
+      await supabase.from('point_history').insert([{ user_id: depositUser.id, points: pointsEarned, type: 'add', description: `ฝากขยะ ${selectedType} ${weightKg} กก.` }]);
       await supabase.from('users').update({ points: newTotal }).eq('id', depositUser.id);
 
       setDepositResult({ pointsEarned, newTotal, co2Reduced, wasteType: selectedType, weightKg: Number(weightKg) });
       setDepositStep('done');
 
-      // 4. ส่ง LINE แจ้งเตือน
       setLineStatus('sending');
       try {
         const res = await fetch('/api/notify-line', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: depositUser.id,
-            name: `${depositUser.firstname} ${depositUser.lastname}`,
-            wasteType: selectedType,
-            weightKg: Number(weightKg),
-            pointsEarned,
-            totalPoints: newTotal,
-            co2Reduced,
-          }),
+          body: JSON.stringify({ userId: depositUser.id, name: `${depositUser.firstname} ${depositUser.lastname}`, wasteType: selectedType, weightKg: Number(weightKg), pointsEarned, totalPoints: newTotal, co2Reduced }),
         });
         setLineStatus(res.ok ? 'sent' : 'failed');
-      } catch {
-        setLineStatus('failed');
-      }
+      } catch { setLineStatus('failed'); }
 
-      fetchUsers(); // refresh list
-    } catch (err) {
-      alert('บันทึกไม่สำเร็จ: ' + err.message);
-    } finally {
-      setSaving(false);
-    }
+      fetchUsers(); 
+    } catch (err) { toast.error('บันทึกไม่สำเร็จ โปรดลองอีกครั้ง'); } 
+    finally { setSaving(false); }
   };
 
-  const totalPages = Math.ceil(userList.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const displayedUsers = userList.slice(startIndex, startIndex + itemsPerPage);
-
-  // ─────────────────────────────────────────────────────────────
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="bg-card rounded-2xl md:rounded-[2rem] border shadow-xl flex flex-col overflow-hidden">
-
         {/* Header */}
-        <div className="p-5 md:p-8 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between bg-white/50 backdrop-blur-md gap-4">
+        <div className="p-5 md:p-8 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between bg-white/50 dark:bg-slate-900/50 backdrop-blur-md gap-4 transition-colors">
           <div className="space-y-1">
-            <h3 className="font-black text-lg md:text-xl leading-tight">บัญชีสมาชิกทั้งหมด</h3>
-            <p className="text-xs md:text-sm text-muted-foreground font-medium opacity-70">มีสมาชิกลงทะเบียน {userList.length} บัญชีในระบบ</p>
+            <h3 className="font-black text-lg md:text-xl leading-tight text-slate-800 dark:text-white">{t('allMembersAccount')}</h3>
+            <p className="text-xs md:text-sm text-muted-foreground font-medium opacity-70">
+              {t('registeredMembers1')}{userList.length}{t('registeredMembers2')}
+            </p>
           </div>
-          {/* ปุ่มสแกน QR รับฝากขยะ */}
           <button
             onClick={openDepositModal}
             className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 bg-green-600 text-white rounded-xl sm:rounded-2xl font-black text-sm hover:bg-green-700 transition-all active:scale-95 shadow-lg"
           >
-            <QrCode className="w-5 h-5" /> สแกน QR รับฝากขยะ
+            <QrCode className="w-5 h-5" /> {t('scanQrDeposit')}
           </button>
         </div>
 
+        {/* Filters */}
+        <div className="px-5 md:px-8 py-4 bg-slate-50/50 dark:bg-slate-950/30 border-b border-border flex flex-col md:flex-row gap-3 transition-colors">
+          {/* Search */}
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder={t('searchUsersPlaceholder')}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-8 py-2.5 text-sm font-bold border border-slate-200 dark:border-slate-800 rounded-xl bg-white dark:bg-slate-900 outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all text-slate-700 dark:text-slate-200 placeholder:text-slate-400"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          {/* Gender + Status dropdowns — เปลี่ยนภาษาตาม lang */}
+          <div className="flex gap-2">
+            <select
+              value={filterGender}
+              onChange={(e) => setFilterGender(e.target.value)}
+              className="px-3 py-2.5 text-sm font-bold border border-slate-200 dark:border-slate-800 rounded-xl outline-none bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 cursor-pointer transition-colors"
+            >
+              <option value="all">{t('allGenders')}</option>
+              <option value="male">{t('male')}</option>
+              <option value="female">{t('female')}</option>
+              <option value="not_specified">{t('notSpecified')}</option>
+            </select>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-3 py-2.5 text-sm font-bold border border-slate-200 dark:border-slate-800 rounded-xl outline-none bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 cursor-pointer transition-colors"
+            >
+              <option value="all">{t('allStatuses')}</option>
+              <option value="active">{t('activeStatus')}</option>
+              <option value="banned">{t('bannedStatus')}</option>
+            </select>
+          </div>
+        </div>
+
         {/* User Grid */}
-        <div className="p-4 md:p-8 flex-1 overflow-y-auto scrollbar-hide">
+        <div className="p-4 md:p-8 flex-1 overflow-y-auto scrollbar-hide bg-white dark:bg-slate-900 transition-colors">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 md:gap-6">
             {loading ? (
               Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 p-4 border rounded-2xl">
+                <div key={i} className="flex items-center gap-4 p-4 border dark:border-slate-800 rounded-2xl">
                   <Skeleton className="w-12 h-12 md:w-16 md:h-16 rounded-full" />
                   <div className="space-y-2 flex-1">
                     <Skeleton className="h-4 w-3/4 rounded-lg" />
@@ -275,27 +356,30 @@ export default function AdminUsers() {
                   </div>
                 </div>
               ))
+            ) : displayedUsers.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-slate-500 dark:text-slate-400">
+                <p className="font-bold">{t('noDataFound')}</p>
+                <p className="text-sm">{t('tryChangeFilter')}</p>
+              </div>
             ) : (
               displayedUsers.map((user) => (
                 <div
                   key={user.id}
-                  className={`flex items-center gap-4 p-4 bg-background border rounded-2xl relative group hover:shadow-lg transition-all duration-300 border-border/50 ${user.status === 'banned' ? 'bg-red-50/50 border-red-100 opacity-80' : ''}`}
+                  className={`flex items-center gap-4 p-4 bg-background border rounded-2xl relative group hover:shadow-lg transition-all duration-300 border-border/50 ${user.status === 'banned' ? 'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-900 opacity-80' : ''}`}
                 >
-                  {/* Action buttons */}
                   <div className="absolute top-3 right-3 flex gap-1.5 sm:opacity-0 group-hover:opacity-100 transition-all z-10">
                     <button
                       onClick={() => { setDepositUser(user); setDepositStep('form'); setSelectedType(''); setWeightKg(''); setDepositResult(null); setLineStatus(''); setIsDepositOpen(true); }}
-                      className="p-2 bg-white/90 shadow-md border rounded-lg text-green-600 hover:bg-green-50 transition-colors"
-                      title="เพิ่มคะแนน"
+                      className="p-2 bg-white dark:bg-slate-800 shadow-md border dark:border-slate-700 rounded-lg text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                      title={t('addPointsTitle')}
                     >
                       <Plus className="w-4 h-4" />
                     </button>
-                    <button onClick={() => openForm(user)} className="p-2 bg-white/90 shadow-md border rounded-lg text-blue-600 hover:bg-blue-50 transition-colors">
+                    <button onClick={() => openForm(user)} className="p-2 bg-white dark:bg-slate-800 shadow-md border dark:border-slate-700 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors" title={t('editTitle')}>
                       <Edit2 className="w-4 h-4" />
                     </button>
                   </div>
 
-                  {/* Avatar */}
                   <div className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-muted overflow-hidden border-2 border-primary/20 shrink-0">
                     {user.profile_image && !user.profile_image.includes('default.png') ? (
                       <img src={user.profile_image} alt={user.username} className="w-full h-full object-cover" />
@@ -306,7 +390,6 @@ export default function AdminUsers() {
                     )}
                   </div>
 
-                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <h4 className="font-black text-sm md:text-base truncate text-foreground leading-none">
@@ -317,11 +400,11 @@ export default function AdminUsers() {
                     </div>
                     <p className="text-[10px] md:text-xs text-muted-foreground font-medium truncate mb-2">@{user.username}</p>
                     <div className="flex flex-wrap gap-1.5">
-                      <span className="inline-flex items-center gap-1 text-[9px] md:text-[10px] font-bold px-2 py-0.5 bg-yellow-500/10 text-yellow-700 rounded-md">
+                      <span className="inline-flex items-center gap-1 text-[9px] md:text-[10px] font-bold px-2 py-0.5 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-md">
                         <Star className="w-2.5 h-2.5" /> {user.points.toLocaleString()}
                       </span>
-                      <span className={`inline-flex items-center text-[9px] md:text-[10px] font-bold px-2 py-0.5 rounded-md ${user.status === 'active' ? 'bg-green-500/10 text-green-700' : 'bg-red-500/10 text-red-700'}`}>
-                        {user.status === 'active' ? 'ปกติ' : 'ระงับ'}
+                      <span className={`inline-flex items-center text-[9px] md:text-[10px] font-bold px-2 py-0.5 rounded-md ${user.status === 'active' ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-red-500/10 text-red-700 dark:text-red-400'}`}>
+                        {user.status === 'active' ? t('normalBadge') : t('bannedBadge')}
                       </span>
                     </div>
                   </div>
@@ -329,32 +412,26 @@ export default function AdminUsers() {
               ))
             )}
           </div>
-          {!loading && userList.length === 0 && (
-            <div className="text-center py-20 opacity-30">
-              <Search className="w-16 h-16 mx-auto mb-4" />
-              <p className="font-bold">ไม่พบข้อมูลผู้ใช้งาน</p>
-            </div>
-          )}
         </div>
 
         <div className="p-4 md:p-6 border-t bg-muted/10 shrink-0">
-          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} itemsPerPage={itemsPerPage} totalItems={userList.length} />
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} itemsPerPage={itemsPerPage} totalItems={filteredUsers.length} />
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════
-          DEPOSIT MODAL — สแกน QR / เพิ่มคะแนน
-      ════════════════════════════════════════════ */}
       <Dialog open={isDepositOpen} onOpenChange={(open) => { if (!open) closeDepositModal(); }}>
-        <DialogContent className="w-[95vw] max-w-md max-h-[90dvh] overflow-y-auto scrollbar-hide rounded-2xl md:rounded-[2rem] p-0 border-none shadow-2xl">
+        <DialogContent className="w-[95vw] max-w-md max-h-[90dvh] overflow-y-auto scrollbar-hide rounded-2xl md:rounded-[2rem] p-0 border-none shadow-2xl [&>button:last-child]:hidden bg-white dark:bg-slate-900 transition-colors">
+          
+          <DialogHeader className="hidden">
+            <DialogTitle>{t('wasteDepositSystem')}</DialogTitle>
+          </DialogHeader>
 
           {/* ── Step: scan ── */}
           {depositStep === 'scan' && (
             <div>
               <div className="bg-gradient-to-r from-green-600 to-emerald-500 p-5 text-white flex items-center justify-between rounded-t-2xl md:rounded-t-[2rem]">
                 <div>
-                  <h3 className="font-black text-lg flex items-center gap-2"><QrCode className="w-5 h-5" /> สแกน QR ลูกค้า</h3>
-                  <p className="text-green-100 text-xs mt-0.5">ให้ลูกค้าเปิด QR จากแอป แล้วนำมาสแกน</p>
+                  <h3 className="font-black text-lg flex items-center gap-2"><QrCode className="w-5 h-5" /> {t('scanCustomerQr')}</h3>
                 </div>
                 <button onClick={closeDepositModal} className="p-2 bg-white/20 hover:bg-white/30 rounded-full">
                   <X className="w-5 h-5" />
@@ -365,30 +442,28 @@ export default function AdminUsers() {
                 {!scanning ? (
                   <button onClick={startScanner}
                     className="w-full py-4 bg-green-600 text-white rounded-2xl font-black flex items-center justify-center gap-3 hover:bg-green-700 active:scale-95 transition-all shadow-lg">
-                    <Camera className="w-5 h-5" /> เปิดกล้องสแกน QR
+                    <Camera className="w-5 h-5" /> {t('openCameraScanQr')}
                   </button>
                 ) : (
                   <div className="space-y-3">
                     <div id="admin-qr-reader" className="w-full rounded-2xl overflow-hidden border-4 border-green-100" />
                     <button onClick={stopScanner}
                       className="w-full py-3 bg-red-50 text-red-500 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-red-100">
-                      <X className="w-4 h-4" /> ยกเลิกสแกน
+                      <X className="w-4 h-4" /> {t('cancelScan')}
                     </button>
                   </div>
                 )}
-
-                <div className="border-t pt-4 space-y-2">
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">หรือกรอก User ID เอง</p>
+                <div className="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-2">
                   <div className="flex gap-2">
                     <input
-                      type="text" placeholder="User ID ของสมาชิก..." value={manualUserId}
+                      type="text" placeholder={t('userIdPlaceholder')} value={manualUserId}
                       onChange={e => setManualUserId(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && fetchDepositUser(manualUserId)}
-                      className="flex-1 p-3 text-sm font-bold border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500"
+                      className="flex-1 p-3 text-sm font-bold border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-colors"
                     />
                     <button onClick={() => fetchDepositUser(manualUserId)}
-                      className="px-4 py-3 bg-slate-800 text-white rounded-xl font-bold text-sm hover:bg-slate-700 active:scale-95 transition-all">
-                      ค้นหา
+                      className="px-4 py-3 bg-slate-800 dark:bg-emerald-600 text-white rounded-xl font-bold text-sm hover:bg-slate-700 dark:hover:bg-emerald-500 active:scale-95 transition-all">
+                      {t('searchBtn')}
                     </button>
                   </div>
                 </div>
@@ -401,8 +476,7 @@ export default function AdminUsers() {
             <div>
               <div className="bg-gradient-to-r from-green-600 to-emerald-500 p-5 text-white flex items-center justify-between rounded-t-2xl md:rounded-t-[2rem]">
                 <div>
-                  <h3 className="font-black text-lg flex items-center gap-2"><Weight className="w-5 h-5" /> บันทึกรับฝากขยะ</h3>
-                  <p className="text-green-100 text-xs mt-0.5">กรอกรายละเอียดการรับฝาก</p>
+                  <h3 className="font-black text-lg flex items-center gap-2"><Weight className="w-5 h-5" /> {t('recordWasteDeposit')}</h3>
                 </div>
                 <button onClick={closeDepositModal} className="p-2 bg-white/20 hover:bg-white/30 rounded-full">
                   <X className="w-5 h-5" />
@@ -410,41 +484,109 @@ export default function AdminUsers() {
               </div>
 
               <div className="p-5 space-y-4">
-                {/* User info */}
-                <div className="flex items-center gap-3 bg-slate-50 rounded-2xl p-3 border border-slate-100">
-                  <div className="w-12 h-12 rounded-full bg-green-100 overflow-hidden flex items-center justify-center shrink-0">
+                <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-3 border border-slate-100 dark:border-slate-700 transition-colors">
+                  <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/50 overflow-hidden flex items-center justify-center shrink-0">
                     {depositUser.profile_image && !depositUser.profile_image.includes('default.png')
                       ? <img src={depositUser.profile_image} className="w-full h-full object-cover" />
-                      : <User className="w-6 h-6 text-green-600" />
+                      : <User className="w-6 h-6 text-green-600 dark:text-green-400" />
                     }
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-black text-slate-800 truncate">{depositUser.firstname} {depositUser.lastname}</p>
-                    <p className="text-xs text-slate-500">@{depositUser.username}</p>
+                    <p className="font-black text-slate-800 dark:text-white truncate">{depositUser.firstname} {depositUser.lastname}</p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-[10px] text-slate-400 font-bold">คะแนนปัจจุบัน</p>
                     <p className="font-black text-yellow-500">{Number(depositUser.points).toLocaleString('th-TH')}</p>
                   </div>
-                  <button onClick={() => { setDepositUser(null); setDepositStep('scan'); }}
-                    className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors ml-1">
-                    <X className="w-4 h-4" />
-                  </button>
                 </div>
 
-                {/* Waste type */}
+                {/* --- AI Real-time Camera Section --- */}
+                <div className="pt-2 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-800/30 transition-colors">
+                  {!isAiCameraOpen ? (
+                    <button 
+                      onClick={startAiCamera}
+                      className="w-full py-4 flex items-center justify-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                    >
+                      <Camera className="w-5 h-5" /> {t('openAiCamera')}
+                    </button>
+                  ) : (
+                    <div className="space-y-3 p-3">
+                      <div className="relative rounded-lg overflow-hidden bg-black aspect-video flex items-center justify-center">
+                        <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                        
+                        <div className="absolute inset-0 border-2 border-indigo-500/50 m-4 rounded-xl pointer-events-none">
+                          <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-indigo-400 rounded-tl-lg"></div>
+                          <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-indigo-400 rounded-tr-lg"></div>
+                          <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-indigo-400 rounded-bl-lg"></div>
+                          <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-indigo-400 rounded-br-lg"></div>
+                        </div>
+                      </div>
+                      
+                      <canvas ref={canvasRef} className="hidden" />
+
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={captureAndAnalyze}
+                          disabled={isAiAnalyzing}
+                          className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {isAiAnalyzing ? <><Loader2 className="w-5 h-5 animate-spin" /> {t('thinking')}</> : <><ScanLine className="w-5 h-5" /> {t('analyzeImage')}</>}
+                        </button>
+                        <button 
+                          onClick={stopAiCamera}
+                          className="px-4 py-3 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors"
+                        >
+                          {t('closeCamera')}
+                        </button>
+                      </div>
+
+                      {isAiAnalyzing && (
+                        <div className="flex items-center gap-3 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 rounded-xl px-4 py-3">
+                          <Loader2 className="w-5 h-5 text-indigo-500 dark:text-indigo-400 animate-spin shrink-0" />
+                          <p className="text-sm font-bold text-indigo-700 dark:text-indigo-300">{t('aiAnalyzing')}</p>
+                        </div>
+                      )}
+
+                      {!isAiAnalyzing && aiResult && (
+                        <div className={`rounded-xl border px-4 py-3 space-y-1.5 ${
+                          aiResult.isMatch
+                            ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+                            : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{aiResult.isMatch ? '✅' : '❌'}</span>
+                            <p className={`text-sm font-black ${aiResult.isMatch ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                              {aiResult.isMatch
+                                ? `${t('foundWaste')} ${aiResult.category}`
+                                : `${t('detectedItemPrefix')} ${aiResult.detectedItem || t('alienObject')}`
+                              }
+                            </p>
+                          </div>
+                          <p className={`text-xs font-medium leading-relaxed ${aiResult.isMatch ? 'text-green-600 dark:text-green-500' : 'text-red-500 dark:text-red-400'}`}>
+                            {aiResult.message}
+                          </p>
+                          {!aiResult.isMatch && (
+                            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 pt-0.5">
+                              {t('notInSystemScanAgain')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">ประเภทขยะ</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 ml-1">{t('wasteTypeLabel')}</span>
                   <div className="relative">
                     <select
                       value={selectedType}
                       onChange={e => setSelectedType(e.target.value)}
-                      className="w-full p-3 pr-8 text-sm font-bold border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 appearance-none"
+                      className="w-full p-3 pr-8 text-sm font-bold border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 appearance-none transition-colors"
                     >
-                      <option value="">-- เลือกประเภทขยะ --</option>
+                      <option value="" className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">{t('selectWasteType')}</option>
                       {wasteTypes.map(w => (
-                        <option key={w.id} value={w.name}>
-                          {w.name} — {w.points_per_kg} แต้ม/กก.
+                        <option key={w.id} value={w.name} className="bg-white dark:bg-slate-800 text-slate-800 dark:text-white">
+                          {w.name} — {w.points_per_kg} {t('ptsPerKg')}
                         </option>
                       ))}
                     </select>
@@ -452,45 +594,36 @@ export default function AdminUsers() {
                   </div>
                 </div>
 
-                {/* Weight */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">น้ำหนัก (กก.)</span>
+                <div className="space-y-1 pt-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 ml-1">{t('weightLabel')}</span>
                   <div className="flex items-center gap-2">
                     <input
                       type="number" step="0.01" min="0.01" placeholder="0.00"
                       value={weightKg} onChange={e => setWeightKg(e.target.value)}
-                      className="flex-1 p-3 text-xl font-black border rounded-xl bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-center"
+                      className="flex-1 p-3 text-xl font-black border border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-center transition-colors"
                     />
-                    <span className="text-base font-black text-slate-400">กก.</span>
+                    <span className="text-base font-black text-slate-400">{t('kg')}</span>
                   </div>
                 </div>
 
                 {/* Preview */}
                 {estimatedPoints > 0 && (
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-                      <span className="text-sm font-bold text-green-700">คะแนนที่จะได้รับ</span>
-                      <span className="text-xl font-black text-green-600">+{estimatedPoints.toLocaleString('th-TH')}</span>
-                    </div>
-                    <div className="flex items-center justify-between bg-sky-50 border border-sky-200 rounded-xl px-4 py-3">
-                      <span className="text-sm font-bold text-sky-700 flex items-center gap-1.5"><Leaf className="w-3.5 h-3.5" /> ลด CO2</span>
-                      <span className="text-sm font-black text-sky-600">{estimatedCo2} kgCO2e</span>
-                    </div>
-                    <div className="flex items-center justify-between bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3">
-                      <span className="text-sm font-bold text-yellow-700">คะแนนรวมหลังบันทึก</span>
-                      <span className="text-sm font-black text-yellow-600">{(depositUser.points + estimatedPoints).toLocaleString('th-TH')}</span>
+                    <div className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl px-4 py-3 transition-colors">
+                      <span className="text-sm font-bold text-green-700 dark:text-green-400">{t('pointsToReceive')}</span>
+                      <span className="text-xl font-black text-green-600 dark:text-green-300">+{estimatedPoints.toLocaleString('th-TH')}</span>
                     </div>
                   </div>
                 )}
 
                 <button
                   onClick={handleSaveDeposit}
-                  disabled={saving || !selectedType || !weightKg || Number(weightKg) <= 0}
-                  className="w-full py-4 bg-green-600 text-white rounded-2xl font-black text-base hover:bg-green-700 flex items-center justify-center gap-3 active:scale-95 transition-all shadow-lg disabled:opacity-50"
+                  disabled={saving || !selectedType || !weightKg || Number(weightKg) <= 0 || isAiAnalyzing}
+                  className="w-full py-4 mt-2 bg-green-600 text-white rounded-2xl font-black text-base hover:bg-green-700 flex items-center justify-center gap-3 active:scale-95 transition-all shadow-lg disabled:opacity-50"
                 >
                   {saving
-                    ? <><Loader2 className="w-5 h-5 animate-spin" /> กำลังบันทึก...</>
-                    : <><Send className="w-5 h-5" /> บันทึก & แจ้งเตือน LINE</>
+                    ? <><Loader2 className="w-5 h-5 animate-spin" /> {t('saving')}</>
+                    : <><Send className="w-5 h-5" /> {t('saveAndNotifyLine')}</>
                   }
                 </button>
               </div>
@@ -502,122 +635,28 @@ export default function AdminUsers() {
             <div>
               <div className="bg-gradient-to-r from-green-600 to-emerald-500 p-8 text-white text-center rounded-t-2xl md:rounded-t-[2rem]">
                 <CheckCircle2 className="w-16 h-16 mx-auto mb-3" />
-                <h3 className="font-black text-2xl">บันทึกสำเร็จ!</h3>
-                <p className="text-green-100 text-sm mt-1">
-                  {lineStatus === 'sending' && 'กำลังส่ง LINE แจ้งเตือน...'}
-                  {lineStatus === 'sent' && '✅ ส่ง LINE แจ้งลูกค้าแล้ว'}
-                  {lineStatus === 'failed' && '⚠️ ส่ง LINE ไม่สำเร็จ (ไม่มี line_user_id)'}
-                </p>
+                <h3 className="font-black text-2xl">{t('saveSuccess')}</h3>
               </div>
-
               <div className="p-5 space-y-3">
-                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                  <span className="font-bold text-slate-500 text-sm">สมาชิก</span>
-                  <span className="font-black text-slate-800">{depositUser?.firstname} {depositUser?.lastname}</span>
+                <div className="flex justify-between items-center py-3 border-b border-slate-100 dark:border-slate-800">
+                  <span className="font-bold text-slate-500 dark:text-slate-400 text-sm">{t('typeWeight')}</span>
+                  <span className="font-black text-slate-700 dark:text-white">{depositResult.wasteType} {depositResult.weightKg} {t('kg')}</span>
                 </div>
-                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                  <span className="font-bold text-slate-500 text-sm">ประเภท / น้ำหนัก</span>
-                  <span className="font-black text-slate-700">{depositResult.wasteType} {depositResult.weightKg} กก.</span>
-                </div>
-                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                  <span className="font-bold text-slate-500 text-sm">คะแนนที่ได้รับ</span>
-                  <span className="font-black text-2xl text-green-600">+{depositResult.pointsEarned.toLocaleString('th-TH')}</span>
-                </div>
-                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                  <span className="font-bold text-slate-500 text-sm">คะแนนรวม</span>
-                  <span className="font-black text-xl text-yellow-500">{depositResult.newTotal.toLocaleString('th-TH')}</span>
-                </div>
-                <div className="flex justify-between items-center py-3">
-                  <span className="font-bold text-slate-500 text-sm flex items-center gap-1.5"><Leaf className="w-3.5 h-3.5 text-sky-500" /> ลด CO2</span>
-                  <span className="font-black text-sky-600">{depositResult.co2Reduced} kgCO2e</span>
-                </div>
-
                 <div className="grid grid-cols-2 gap-3 pt-2">
                   <button
                     onClick={() => { setDepositUser(null); setDepositStep('scan'); setDepositResult(null); setLineStatus(''); setSelectedType(''); setWeightKg(''); }}
                     className="py-3 bg-green-600 text-white rounded-2xl font-black text-sm hover:bg-green-700 active:scale-95 transition-all"
                   >
-                    รับฝากรายถัดไป
+                    {t('nextDeposit')}
                   </button>
                   <button onClick={closeDepositModal}
-                    className="py-3 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm hover:bg-slate-200 active:scale-95 transition-all">
-                    ปิด
+                    className="py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black text-sm hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition-all">
+                    {t('closeBtn')}
                   </button>
                 </div>
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* ════════════════════════════════════════════
-          EDIT USER DIALOG
-      ════════════════════════════════════════════ */}
-      <Dialog open={isDialogOpen} onOpenChange={(open) => { if (!open) handleCloseForm(); }}>
-        <DialogContent className="w-[95%] max-w-[450px] max-h-[90vh] overflow-y-auto scrollbar-hide rounded-2xl md:rounded-[2rem] p-5 md:p-6 border-none shadow-2xl">
-          <DialogHeader className="mb-4">
-            <DialogTitle className="text-lg md:text-xl font-black tracking-tight">แก้ไขข้อมูลสมาชิก</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSave} className="space-y-4">
-            <div className="flex justify-center mb-4">
-              <label className="relative w-24 h-24 md:w-28 md:h-28 rounded-full border-4 border-dashed border-primary/20 cursor-pointer hover:border-primary/50 transition-all overflow-hidden group">
-                {(formData.profile_image && !formData.profile_image.includes('default.png')) ? (
-                  <img src={formData.profile_image} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center bg-muted text-muted-foreground group-hover:text-primary transition-all text-center">
-                    <Upload className="w-5 h-5 mb-1" />
-                    <span className="text-[8px] md:text-[9px] font-black uppercase px-2">เปลี่ยนรูป</span>
-                  </div>
-                )}
-                <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-              </label>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">ชื่อ</span>
-                  <input type="text" value={formData.firstname} onChange={e => setFormData({...formData, firstname: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 focus:bg-background outline-none focus:ring-2 focus:ring-primary/20 border-transparent focus:border-primary" />
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">นามสกุล</span>
-                  <input type="text" value={formData.lastname} onChange={e => setFormData({...formData, lastname: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 focus:bg-background outline-none focus:ring-2 focus:ring-primary/20 border-transparent focus:border-primary" />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-yellow-600 ml-2">คะแนนสะสม</span>
-                  <input type="number" value={formData.points} onChange={e => setFormData({...formData, points: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 outline-none focus:ring-2 focus:ring-yellow-500/20 border-transparent focus:border-yellow-500" required />
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-2">เบอร์ติดต่อ</span>
-                  <input type="text" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 outline-none focus:ring-2 focus:ring-primary/20 border-transparent focus:border-primary" />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 ml-2">ระดับผู้ใช้</span>
-                  <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 outline-none focus:ring-2 focus:ring-blue-500/20 border-transparent focus:border-blue-500">
-                    <option value="user">สมาชิกทั่วไป</option>
-                    <option value="admin">ผู้ดูแลระบบ</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-red-600 ml-2">สถานะบัญชี</span>
-                  <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})} className="w-full p-3 text-sm font-bold border rounded-xl bg-muted/30 outline-none focus:ring-2 focus:ring-red-500/20 border-transparent focus:border-red-500">
-                    <option value="active">ใช้งานปกติ</option>
-                    <option value="banned">ระงับการใช้งาน</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter className="mt-6">
-              <button type="submit" disabled={uploading} className="w-full py-4 bg-primary text-white rounded-xl font-black text-sm md:text-base hover:bg-primary/90 transition-all shadow-lg active:scale-95 disabled:opacity-50">
-                {uploading ? 'กำลังบันทึก...' : 'บันทึกข้อมูลผู้ใช้'}
-              </button>
-            </DialogFooter>
-          </form>
         </DialogContent>
       </Dialog>
     </div>
